@@ -41,6 +41,8 @@ export default function App() {
 
   const [editingSystem, setEditingSystem] = useState(null);
 
+  const [showSystemForm, setShowSystemForm] = useState(false);
+
   const [editingGame, setEditingGame] = useState(null);
 
   const [showGameForm, setShowGameForm] = useState(false);
@@ -177,15 +179,47 @@ export default function App() {
     );
   }
 
+  // Existing systems use a "{TYPE}-{NN}" id (e.g. "PS5-01"), so a new
+  // system's id keeps that same convention instead of a raw timestamp.
+  function nextSystemId(type) {
+    const numbers = systems
+      .filter((item) => item.type === type)
+      .map((item) => Number(item.id.split("-")[1]) || 0);
+
+    const next = numbers.length > 0 ? Math.max(...numbers) + 1 : 1;
+
+    return `${type}-${String(next).padStart(2, "0")}`;
+  }
+
   function saveSystem(updates) {
     if (!isAdmin) {
       alert("Admin access required.");
       return;
     }
 
-    setSystems((prev) =>
-      prev.map((item) => {
-        if (item.id !== updates.id) return item;
+    const isNewSystem = !updates.id;
+    const id = isNewSystem ? nextSystemId(updates.type) : updates.id;
+
+    setSystems((prev) => {
+      if (isNewSystem) {
+        return [
+          ...prev,
+          {
+            id,
+            name: updates.name,
+            type: updates.type,
+            // A system that didn't exist a moment ago can't already have
+            // a session in progress, so it always starts Available.
+            status: "Available",
+            players: 0,
+            customer: "",
+            startedAt: "",
+          },
+        ];
+      }
+
+      return prev.map((item) => {
+        if (item.id !== id) return item;
 
         const wasPlaying = item.status === "Playing";
         const nowPlaying = updates.status === "Playing";
@@ -204,29 +238,31 @@ export default function App() {
               : now.toTimeString().slice(0, 5)
             : "",
         };
-      }),
-    );
+      });
+    });
 
     // Installed games live on each game record (game.installedOn), so
     // syncing "installed on this system" means updating the game library,
-    // not the system itself.
+    // not the system itself. Works the same whether the system is brand
+    // new or already existed, since it only depends on `id`.
     setGames((prev) =>
       prev.map((game) => {
         const shouldBeInstalled = updates.installedGameIds.includes(game.id);
-        const isInstalled = Boolean(game.installedOn?.includes(updates.id));
+        const isInstalled = Boolean(game.installedOn?.includes(id));
 
         if (shouldBeInstalled === isInstalled) return game;
 
         return {
           ...game,
           installedOn: shouldBeInstalled
-            ? [...(game.installedOn || []), updates.id]
-            : (game.installedOn || []).filter((id) => id !== updates.id),
+            ? [...(game.installedOn || []), id]
+            : (game.installedOn || []).filter((gid) => gid !== id),
         };
       }),
     );
 
     setEditingSystem(null);
+    setShowSystemForm(false);
   }
 
   async function openImagePicker(game) {
@@ -367,6 +403,12 @@ export default function App() {
                 games={games}
                 startStop={startStopSession}
                 setEditingSystem={setEditingSystem}
+                add={() => {
+                  if (!isAdmin) return;
+
+                  setEditingSystem(null);
+                  setShowSystemForm(true);
+                }}
                 isAdmin={isAdmin}
               />
             )}
@@ -433,13 +475,16 @@ export default function App() {
             />
           )}
 
-          {editingSystem && isAdmin && (
+          {(editingSystem || showSystemForm) && isAdmin && (
             <SystemForm
-              key={editingSystem.id}
+              key={editingSystem ? editingSystem.id : "new-system"}
               system={editingSystem}
               games={games}
               onSave={saveSystem}
-              onClose={() => setEditingSystem(null)}
+              onClose={() => {
+                setEditingSystem(null);
+                setShowSystemForm(false);
+              }}
             />
           )}
         </div>
